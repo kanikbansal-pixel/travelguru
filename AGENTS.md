@@ -21,9 +21,9 @@ Always load these before making decisions:
 |----------|----------|---------|
 | PRD | `docs/PRD-WayPoint-MVP.md` | What to build and why |
 | Research | `docs/research-WayPoint.md` | Market context and competitor landscape |
-| Tech Design | `docs/TechDesign-WayPoint-MVP.md` | Stack, data model, API decisions (in progress) |
+| Tech Design | `docs/TechDesign-WayPoint-MVP.md` | Full stack decisions, architecture, data model, build phases |
 | Project brief | `agent_docs/project_brief.md` | Concise context for new sessions |
-| Tech stack | `agent_docs/tech_stack.md` | Confirmed technology choices |
+| Tech stack | `agent_docs/tech_stack.md` | Confirmed technology choices (quick reference) |
 | Testing | `agent_docs/testing.md` | Testing approach and standards |
 
 ---
@@ -119,18 +119,23 @@ After each feature:
 
 ---
 
-## Open questions (resolve before building affected features)
+## Confirmed technical decisions (do not re-debate these)
 
-- Which source set to use in V1 (structured APIs vs. curated retrieval)?
-- Should users be required to sign in before saving an itinerary?
-- One city or two cities supported in first release?
-- What level of source transparency is most useful in the UI without clutter?
-- Introduce monetization at launch or after value validation?
+- **Stack:** Next.js 14 (App Router) + Supabase + OpenAI GPT-4o + Mapbox + Foursquare + Vercel
+- **Auth model:** Anonymous generation allowed; sign-in (Supabase Auth) required to save
+- **V1 city scope:** One city per trip (two-city deferred)
+- **Source set V1:** Foursquare (structured place data) + Reddit API (community signals, read-only)
+- **LLM role:** Rationale generation only — scheduling uses deterministic rules
+- **Source transparency UX:** Inline source badge on PlaceCard, expandable on click for full rationale
+- **Monetisation:** Not at launch; validate trust and usage first
+
+See `docs/TechDesign-WayPoint-MVP.md` for full reasoning and trade-off analysis.
 
 ---
 
 ## Contacts and context
 
 - Workflow template: https://github.com/KhazP/vibe-coding-prompt-template
+- GitHub repo: https://github.com/kanikbansal-pixel/travelguru
 - This is a solo or small-team project with a low-budget MVP constraint.
-- Deployment target: web hosting (Vercel or Cloudflare Pages preferred).
+- Deployment target: **Vercel** (confirmed in tech design).

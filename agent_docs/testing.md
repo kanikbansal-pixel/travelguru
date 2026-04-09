@@ -46,11 +46,12 @@
 
 ---
 
-## Tooling (TBD after stack decision)
+## Tooling (confirmed)
 
-| Concern | Likely tool |
-|---------|-------------|
-| Unit and integration tests | Vitest or Jest |
-| End-to-end tests | Playwright |
-| Linting | ESLint + Prettier |
-| Type checking | TypeScript strict mode |
+| Concern | Tool |
+|---------|------|
+| Unit and integration tests | **Vitest** |
+| Mocking HTTP in integration tests | **msw (Mock Service Worker)** |
+| End-to-end tests | **Playwright** |
+| Linting | **ESLint + Prettier** |
+| Type checking | **TypeScript strict mode** |

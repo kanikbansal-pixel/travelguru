@@ -1,64 +1,90 @@
-# Tech Stack — WayPoint
+# Tech Stack — WayPoint MVP
 
-> This file will be completed after the technical design phase (Step 3 in the vibe-coding workflow).
-> Leave placeholder sections here for the tech design output.
-
----
-
-## Status
-
-**Not yet decided.** Tech design is the next planned phase.
-
-The sections below are prompts for what needs to be answered, not final decisions.
+> Finalised after tech design phase. Use this as the reference for all implementation decisions.
 
 ---
 
-## Questions to resolve in tech design
+## Confirmed stack
 
-### Frontend
-- Framework (Next.js, SvelteKit, Remix, Nuxt, plain React)?
-- UI component library or hand-rolled?
-- State management approach for itinerary editing?
-
-### Backend
-- Server-side framework or serverless functions?
-- Where does the recommendation engine live?
-- API design: REST, tRPC, or GraphQL?
-
-### Database
-- What needs to be persisted (trips, places, itineraries, user accounts)?
-- SQL vs. document store?
-- Managed hosting (Supabase, PlanetScale, Neon, Turso)?
-
-### AI / LLM
-- Which model for ranking and rationale generation?
-- How to keep LLM usage cost-bounded?
-- Deterministic rules vs. LLM for scheduling logic?
-
-### Maps and places
-- Google Maps Platform, Mapbox, or OSM-based alternative?
-- Which APIs for place data and route estimation?
-- Caching strategy to contain costs?
-
-### Content / source retrieval
-- How to source candidate places (structured APIs, curated retrieval, or hybrid)?
-- Reddit API usage scope and rate limits?
-- Blog/web content: link-and-summary only, not full text copying?
-
-### Auth
-- Required in v1?
-- If yes: managed auth (Clerk, Auth.js, Supabase Auth) or custom?
-
-### Deployment
-- Vercel, Cloudflare Pages, Fly.io, or other?
-- Environment variable management?
-- CI/CD approach?
+| Concern | Choice | Notes |
+|---------|--------|-------|
+| Framework | **Next.js 14 (App Router)** | SSR + client components; API routes as serverless functions |
+| Language | **TypeScript (strict)** | Required across all files |
+| Styling | **Tailwind CSS + shadcn/ui** | shadcn/ui for accessible component primitives |
+| Database | **Supabase (PostgreSQL)** | Auth, storage, and DB in one managed service |
+| ORM | **Prisma** | Type-safe schema + migrations |
+| Auth | **Supabase Auth** | Email + Google OAuth; anonymous generation allowed |
+| LLM | **OpenAI GPT-4o (JSON mode)** | Rationale generation and quality check only |
+| Place data | **Foursquare Places API** | 100k requests/month free tier |
+| Community signals | **Reddit API (read-only)** | Travel subreddits; summary + link only |
+| Maps | **Mapbox GL JS + react-map-gl** | 50k map loads/month free tier |
+| Routing / travel time | **Mapbox Directions API** | Cached aggressively |
+| Deployment | **Vercel** | Automatic preview per branch; native Next.js support |
+| Error tracking | **Sentry (free tier)** | Required before launch |
+| Analytics | **Posthog (free tier)** | Product funnel analytics |
+| Testing (unit) | **Vitest** | |
+| Testing (E2E) | **Playwright** | |
 
 ---
 
-## Guiding constraints
+## Architecture pattern
 
-- Low budget: prefer free tiers, avoid APIs that become expensive quickly at low scale
-- Solo/small team: prefer managed services over self-hosted infrastructure
-- Must be web-deployable (Vercel or Cloudflare Pages preferred)
-- Keep architecture simple — MVP is not a platform, it is a focused product
+Single Next.js app: frontend + API routes (serverless). No separate backend service.
+
+```
+Browser → Next.js API Routes (Vercel) → Supabase / OpenAI / Mapbox / Foursquare / Reddit
+```
+
+---
+
+## Key design decisions
+
+1. **Anonymous generation, sign-in to save.** Users can generate without an account. Sign-in (Supabase Auth) unlocks saving and viewing saved trips.
+
+2. **Deterministic scheduling first, LLM last.** The itinerary builder uses rules (max stops/day, time blocks, geographic grouping) before calling the LLM. LLM is only used for rationale text and a quality check pass.
+
+3. **All API calls are cached.** Foursquare results: 7 days. Mapbox route results: 30 days. LLM rationale: 14 days. Reddit mentions: 24 hours. This keeps costs near zero at MVP scale.
+
+4. **rationale is non-nullable at the DB level.** PlaceSlot.rationale is required in the Prisma schema, enforcing the product's core trust layer at the data layer.
+
+5. **V1 scope: one city per trip.** Two-city support is deferred to reduce scope risk.
+
+6. **Top 10 destinations at launch.** Quality is more important than coverage. Manually QA each destination.
+
+---
+
+## Cost reference (MVP scale)
+
+| Scale | Monthly estimate |
+|-------|----------------|
+| 0–500 users | $0–$15 |
+| 500–2000 users | $30–$80 |
+| 2000–10000 users | $100–$300 |
+
+Set an OpenAI spending cap at $20/month during development. Rate limit itinerary generation to 3 per IP per hour.
+
+---
+
+## Environment variables needed
+
+```
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+OPENAI_API_KEY
+NEXT_PUBLIC_MAPBOX_TOKEN
+MAPBOX_TOKEN
+FOURSQUARE_API_KEY
+REDDIT_CLIENT_ID
+REDDIT_CLIENT_SECRET
+REDDIT_USER_AGENT
+SENTRY_DSN
+NEXT_PUBLIC_POSTHOG_KEY
+NEXT_PUBLIC_POSTHOG_HOST
+```
+
+---
+
+## Full technical design
+
+See `docs/TechDesign-WayPoint-MVP.md` for architecture diagram, full data schema, API design, pipeline breakdown, and build phase order.

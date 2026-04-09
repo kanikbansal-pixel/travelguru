@@ -17,7 +17,7 @@ A web app that generates realistic, source-backed international trip itineraries
 
 ## Current phase
 
-Research and PRD are done. Technical design is the immediate next step. Code has not started yet.
+Research, PRD, and technical design are done. Next step is generating `AGENTS.md` agent-specific configs and starting the MVP build (Phase 1: skeleton).
 
 ---
 
@@ -48,6 +48,10 @@ Flight booking, hotel booking, payments, visa support, social features, mobile a
 
 ---
 
+## Confirmed stack
+
+Next.js 14 (App Router) + Supabase + OpenAI GPT-4o + Mapbox + Foursquare Places API + Reddit API + Vercel
+
 ## Key files
 
 | File | Purpose |
@@ -55,14 +59,5 @@ Flight booking, hotel booking, payments, visa support, social features, mobile a
 | `AGENTS.md` | Master AI instructions — read first |
 | `docs/PRD-WayPoint-MVP.md` | Full product requirements |
 | `docs/research-WayPoint.md` | Market research and competitor analysis |
-| `docs/TechDesign-WayPoint-MVP.md` | Stack decisions (to be created) |
-
----
-
-## Open questions before building
-
-1. Which data sources power recommendations in V1?
-2. Sign-in required to save?
-3. One or two cities in first release?
-4. Source transparency UX: inline vs. expandable vs. sidebar?
-5. Monetize at launch or after validation?
+| `docs/TechDesign-WayPoint-MVP.md` | Full technical design — stack, schema, pipeline, build phases |
+| `agent_docs/tech_stack.md` | Quick reference for confirmed stack decisions |
