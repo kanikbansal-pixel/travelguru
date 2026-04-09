@@ -1,0 +1,29 @@
+---
+description: WayPoint project rules — applied to all sessions in this repo
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# WayPoint agent rules
+
+Always read `AGENTS.md` first. Then load `agent_docs/project_brief.md` for compact context.
+
+## Non-negotiables
+
+- Every itinerary place must have a `rationale` field and at least one `source` reference. Never stub or skip these — they are the core product differentiator.
+- Day plans must include travel-time buffers between stops. Never return a day plan that is just a flat list of places with no timing logic.
+- No API keys, secrets, or credentials in source code. Use environment variables only.
+- No full blog or article text stored in the database. Summaries, metadata, and source links only.
+- Do not build features outside MVP scope without explicit approval.
+
+## Workflow
+
+- Propose a plan before writing code. Wait for approval.
+- Build one feature at a time. Stop and summarize after each.
+- Write a `specs/recap-YYYY-MM-DD.md` at the end of each session.
+
+## Code style
+
+- TypeScript with strict mode. No `any` without justification.
+- Small, single-purpose components and functions.
+- Comments only for non-obvious intent — not narration of what the code does.
