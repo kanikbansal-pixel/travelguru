@@ -198,7 +198,40 @@ Response: { trips: TripSummary[] }
 
 ## Data Model
 
-### Prisma schema (PostgreSQL via Supabase)
+Two versions — V1 (48-hour, simple jsonb) and V2 (production, normalised Prisma schema). Start with V1.
+
+### V1 — 48-hour schema (Supabase SQL, no Prisma)
+
+```sql
+-- Run this in the Supabase SQL editor — takes 5 minutes
+CREATE TABLE trips (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid REFERENCES auth.users(id),  -- nullable for anonymous trips
+  destination text NOT NULL,
+  start_date  date,
+  end_date    date,
+  inputs      jsonb NOT NULL,      -- raw form inputs
+  itinerary   jsonb NOT NULL,      -- full LLM output
+  status      text DEFAULT 'draft',
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE INDEX idx_trips_user_id ON trips(user_id);
+
+-- RLS
+ALTER TABLE trips ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own trips" ON trips
+  FOR SELECT USING (auth.uid() = user_id OR user_id IS NULL);
+
+CREATE POLICY "Anyone can insert" ON trips
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Users can update own trips" ON trips
+  FOR UPDATE USING (auth.uid() = user_id);
+```
+
+### V2 — Production schema (Prisma, migrate after MVP validation)
 
 ```prisma
 model User {
@@ -298,7 +331,33 @@ model Source {
 
 ## Itinerary Generation Pipeline
 
-This is the most complex part of the system. It has three stages: **data gathering**, **deterministic scheduling**, and **LLM enrichment**. LLM is used for rationale and ranking only — not for scheduling logic.
+There are two versions of this pipeline. The 48-hour MVP uses V1 (LLM-first). The production pipeline (V2) is the long-term target. See the 48-Hour Risk Analysis section for full reasoning.
+
+### V1 — 48-hour pipeline (LLM-first, single call)
+
+```
+User input
+    │
+    ▼
+1. SINGLE LLM CALL (OpenAI GPT-4o, JSON mode)
+   - Input: all user preferences
+   - Output: complete structured itinerary JSON
+     (days, places, rationale, travel time estimates, source labels)
+    │
+    ▼
+2. THIN POST-PROCESSING (< 50 lines, deterministic)
+   - Trim days exceeding 5 places
+   - Validate lat/lng within city bounding box
+   - Reject any place missing a rationale field
+    │
+    ▼
+3. PERSIST (Supabase JS, jsonb column — no Prisma yet)
+    │
+    ▼
+Return itinerary to client
+```
+
+### V2 — Production pipeline (post-MVP, real sources)
 
 ```
 User input
@@ -325,39 +384,70 @@ User input
    └── Quality check: flag implausible slots for review
     │
     ▼
-Itinerary object → persisted to DB → returned to client
+Itinerary object → persisted to DB (Prisma schema) → returned to client
 ```
 
-### LLM prompt pattern (rationale generation)
+### LLM prompt pattern — V1 (single call, full itinerary)
 
 ```typescript
-// generateRationale.ts
-const prompt = `
-You are a travel planning assistant for WayPoint.
+// lib/openai/generateItinerary.ts
+const systemPrompt = `
+You are WayPoint, a realistic and trustworthy international trip planner.
+Your job is to generate a day-by-day itinerary that feels grounded in real traveler experience.
 
-User profile:
-- Destination: ${destination}
-- Interests: ${interests.join(', ')}
-- Pace: ${pace}
-- Budget: ${budgetLevel}
+Rules:
+- Maximum 5 places per day. For a relaxed pace, use 3-4.
+- Group nearby places on the same day — minimise unnecessary backtracking.
+- Include realistic travel time estimates between consecutive stops.
+- Every place MUST have a specific rationale explaining why it fits this traveler's interests.
+  Do NOT use generic phrases like "a must-visit" or "popular tourist spot".
+- Include a sourceLabel for each place: cite the type of community source that commonly recommends it
+  (e.g. "Frequently recommended on r/JapanTravel", "Popular in travel blogs for budget travelers").
+- Times: morning starts at 9am, allow 1-2 hours per cultural site, 45 min-1hr for food stops.
 
-Place:
-- Name: ${place.name}
-- Category: ${place.category}
-- Description: ${place.description}
-- Sources: ${place.sources.map(s => s.label).join(', ')}
+Respond ONLY with valid JSON matching the schema below. No commentary outside the JSON.
 
-Write a 2-sentence rationale explaining specifically why this place suits this traveler.
-Do not use generic phrases like "a must-visit" or "popular attraction".
-Be specific to their interests.
+Schema:
+{
+  "destination": string,
+  "days": [
+    {
+      "dayIndex": number,
+      "date": "YYYY-MM-DD",
+      "theme": string,
+      "places": [
+        {
+          "name": string,
+          "category": string,
+          "description": string,
+          "lat": number,
+          "lng": number,
+          "startTime": "HH:MM",
+          "durationMinutes": number,
+          "travelTimeToNextMinutes": number | null,
+          "rationale": string,
+          "sourceLabel": string
+        }
+      ]
+    }
+  ]
+}
+`;
 
-Respond in JSON: { "rationale": "..." }
+const userPrompt = `
+Plan a ${numDays}-day trip to ${destination}.
+Start date: ${startDate}
+Budget: ${budgetLevel}
+Pace: ${pace}
+Interests: ${interests.join(', ')}
+Must include: ${mustDo.join(', ') || 'nothing specific'}
+Must avoid: ${mustAvoid.join(', ') || 'nothing specific'}
 `;
 ```
 
-**Cost control:**
-- Rationale is generated once per PlaceSlot and cached. No re-calling for the same place + user-profile combination.
-- Budget: at 5 places/day × 6 days = 30 LLM calls per itinerary. GPT-4o at ~$0.01 per call = ~$0.30 per full itinerary generation. Acceptable.
+**Cost for V1 (single call):** One GPT-4o call per generation. At a 5-day itinerary, the full JSON is ~2000–3000 tokens output. Cost: ~$0.03–0.06 per itinerary. Much cheaper than 30 individual rationale calls.
+
+**V2 prompt pattern:** When switching to the V2 pipeline, the LLM only generates rationale per place — scheduling is handled by deterministic rules. See the V2 pipeline section above.
 
 ---
 
@@ -424,11 +514,11 @@ export function createSupabaseServerClient() {
 
 ---
 
-## Place Data — Source Strategy (V1)
+## Place Data — Source Strategy
 
-V1 uses two sources. More can be added later without changing the architecture.
+> **48-hour MVP:** Skip Foursquare and Reddit entirely. The LLM generates place names, coordinates, and source labels directly. This removes 3 external API integrations and ~8 hours of integration work. Add real sources in v1.1.
 
-### Source 1: Foursquare Places API
+### V2 — Source 1: Foursquare Places API
 
 - Free tier: 100,000 API calls/month
 - Provides: name, category, lat/lng, address, tips, rating, hours
@@ -456,7 +546,7 @@ export async function searchPlaces(params: {
 }
 ```
 
-### Source 2: Reddit API (read-only)
+### V2 — Source 2: Reddit API (read-only)
 
 - Used for: sourcing traveler-driven recommendations from travel subreddits
 - Subreddits in scope: r/travel, r/solotravel, destination-specific (e.g. r/JapanTravel)
@@ -481,17 +571,27 @@ Expensive API calls are cached to contain costs:
 
 ## Environment Variables
 
+### 48-hour MVP (minimum required)
+
 ```bash
 # .env.local — never commit this file
+
+# Supabase — required from hour 1
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 
+# OpenAI — required for generation
 OPENAI_API_KEY=
 
-NEXT_PUBLIC_MAPBOX_TOKEN=
-MAPBOX_TOKEN=
+# Mapbox — only needed if building the map view in Phase 6
+# NEXT_PUBLIC_MAPBOX_TOKEN=
+# MAPBOX_TOKEN=
+```
 
+### Full production set (add after MVP)
+
+```bash
 FOURSQUARE_API_KEY=
 
 REDDIT_CLIENT_ID=
@@ -637,46 +737,142 @@ Vercel handles deployment automatically on merge to main. No separate deploy ste
 
 ## Feature Build Order
 
-Build in this sequence — each phase is independently testable and valuable:
+Build in this sequence — each phase is independently testable and valuable.
 
-### Phase 1 — Skeleton (validate flow end-to-end)
-- [ ] Next.js project with Supabase connection
-- [ ] Trip input form (all fields, validation)
-- [ ] Stub itinerary generator (return hardcoded Tokyo itinerary)
-- [ ] Basic itinerary view page (display the stub)
-- [ ] Deploy to Vercel
+> **48-hour constraint:** See the risk analysis section below before reading this. The 48-hour MVP uses a different pipeline (LLM-first) than the full production pipeline (gather → schedule → LLM). The phases here reflect the 48-hour path.
 
-### Phase 2 — Real data (replace stubs with live APIs)
-- [ ] Foursquare place search integration
-- [ ] Mapbox geocoding (destination → lat/lng)
-- [ ] Mapbox Directions (travel time between stops)
-- [ ] Deterministic scheduling engine (max stops/day, time blocks, geographic grouping)
-- [ ] Map view with place markers and route polyline
+### Phase 1 — Skeleton and deploy (target: 4 hours)
+- [ ] Next.js 14 project initialised with Tailwind + shadcn/ui
+- [ ] Supabase project created, Prisma schema migrated
+- [ ] Trip input form (all fields, client-side validation)
+- [ ] Stub itinerary generator (return hardcoded JSON for one destination)
+- [ ] Basic itinerary view rendering the stub
+- [ ] Deployed to Vercel with environment variables set
 
-### Phase 3 — Trust layer (the differentiator)
-- [ ] OpenAI rationale generation per place
-- [ ] Reddit API source mentions
-- [ ] Source labels on PlaceCard
-- [ ] Rationale text displayed in UI
+### Phase 2 — LLM-powered generation (target: 6 hours)
+- [ ] OpenAI API route: generate full itinerary JSON from user inputs
+- [ ] Prompt returns structured output: days, places, rationale, estimated travel time, source labels (LLM-authored, not live API)
+- [ ] Replace stub with live LLM call
+- [ ] Loading state during generation (streaming optional)
+- [ ] Basic error handling (LLM failure → friendly message)
 
-### Phase 4 — Editor
-- [ ] Remove a stop
-- [ ] Reorder stops within a day (drag or up/down buttons)
-- [ ] Replace a stop (search → pick alternative)
-- [ ] Regenerate one day
+### Phase 3 — Trust layer visible in UI (target: 4 hours)
+- [ ] PlaceCard component showing: name, category, rationale, source label(s)
+- [ ] TravelTimeBadge between consecutive stops
+- [ ] DayCard wrapping PlaceCards with day summary
+- [ ] Copy-to-clipboard export of full itinerary as plain text
 
-### Phase 5 — Save and auth
-- [ ] Supabase Auth (email + Google)
-- [ ] Save itinerary (requires sign-in)
-- [ ] List saved trips
-- [ ] Export itinerary as plain text / copy to clipboard
+### Phase 4 — Simple editor (target: 4 hours)
+- [ ] Remove a stop from a day
+- [ ] Regenerate one day (re-call LLM for that day only, keep others)
+- [ ] Reorder stops within a day (up/down buttons — no drag required at MVP)
 
-### Phase 6 — Polish
-- [ ] Error states and loading states
-- [ ] Mobile responsive layout
-- [ ] Sentry error tracking
-- [ ] Posthog analytics
-- [ ] Rate limiting middleware
+### Phase 5 — Save and auth (target: 4 hours)
+- [ ] Supabase Auth: email sign-in only (drop Google OAuth for now — adds config time)
+- [ ] Save itinerary to DB (requires sign-in; prompt at save click)
+- [ ] List saved trips on a simple /trips page
+
+### Phase 6 — Map (target: 4 hours, deprioritise if time-constrained)
+- [ ] Mapbox static map or embed showing place markers
+- [ ] Route line between stops (can use Mapbox Static Images API instead of GL JS to avoid SSR complexity)
+
+**If map is cut:** The product still delivers on its core promise without the map. The map enhances routing realism but the rationale + realistic pacing is the primary differentiator. Cut the map from the 48-hour build if Phase 4 runs long.
+
+---
+
+## 48-Hour Risk Analysis
+
+> Read this before starting the build. The original 3-stage pipeline (gather → schedule → LLM) is the right long-term design. For a 48-hour MVP it has five blockers that will individually consume most of your available time.
+
+### The blockers and how to cut around them
+
+| Blocker | Time lost if kept | Cut |
+|---------|------------------|-----|
+| **Deterministic scheduling engine** | 8–12 hours | Replace with LLM-structured output — ask the model to produce a day-by-day JSON with realistic timing, geographic grouping, and max-stops-per-day constraints baked into the prompt. Enforce hard limits in a thin post-processing step (< 50 lines). |
+| **Reddit API OAuth + extraction** | 4–8 hours (plus possible review delay) | Remove entirely. Have the LLM produce source labels inline (e.g. "Based on popular recommendations from r/JapanTravel"). Label is honest — users understand LLM-authored context. Add real Reddit sourcing in v1.1. |
+| **Foursquare API integration + category mapping** | 3–5 hours | Remove entirely. LLM generates place names and metadata directly. Add Foursquare in v1.1 to ground place data in real IDs and ratings. |
+| **Mapbox GL JS + Next.js SSR issues** | 4–6 hours | Use Mapbox Static Images API (simple REST call, returns a PNG) or defer the map entirely. Static map is 30 minutes. Interactive map with react-map-gl is half a day. |
+| **Prisma + Supabase connection pooling** | 2–4 hours of debugging | Use Supabase JS client directly for the 48-hour build instead of Prisma. Supabase client works out of the box with no pooling config. Migrate to Prisma in v1.1 when the schema stabilises. |
+
+### Revised 48-hour pipeline
+
+```
+User input
+    │
+    ▼
+1. SINGLE LLM CALL (GPT-4o, JSON mode)
+   Input: destination, dates, budget, pace, interests, must-do, must-avoid
+   Output: structured itinerary JSON with:
+     - days[] with date and dayIndex
+     - places[] with name, category, description, lat, lng, rationale, sourceLabel
+     - travelTimeMinutes between consecutive places (LLM-estimated, good enough)
+     - dayTheme (2-sentence summary)
+    │
+    ▼
+2. THIN POST-PROCESSING (deterministic, < 50 lines)
+   - Enforce max 5 places per day (trim if LLM over-generates)
+   - Validate lat/lng are in expected city bounding box (reject outliers)
+   - Ensure every place has a non-empty rationale
+    │
+    ▼
+3. PERSIST TO SUPABASE
+   - Store trip inputs + full itinerary JSON as jsonb (not normalised tables yet)
+   - Simpler than the full relational schema; migrate to Prisma schema post-MVP
+    │
+    ▼
+4. RETURN TO CLIENT
+   - Render itinerary view immediately
+```
+
+### Why LLM-first is honest for a 48-hour MVP
+
+The product's core claim is: *"Verified trip reasoning — not just itinerary generation."*
+
+For the MVP, the rationale text is what proves the claim to users. Whether it came from a Foursquare lookup → Reddit mention → LLM-ranked pipeline, or from a single LLM call that was explicitly prompted to explain its reasoning and cite plausible community sources — the user experience of reading it is the same.
+
+The distinction that matters is: does the rationale feel specific and grounded, or generic? That is a prompting and UI problem, not an infrastructure problem. You can prove it with one good LLM call.
+
+The Foursquare + Reddit + scheduler infrastructure is what makes the recommendations *verifiably accurate at scale*. That is a v1.1 problem.
+
+### Revised data storage for 48-hour build
+
+Instead of the full Prisma schema, store the generated itinerary as `jsonb` in a single Supabase table:
+
+```sql
+CREATE TABLE trips (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid REFERENCES auth.users(id),  -- nullable
+  destination text NOT NULL,
+  start_date  date,
+  end_date    date,
+  inputs      jsonb NOT NULL,    -- raw user form inputs
+  itinerary   jsonb NOT NULL,    -- full LLM output, structured
+  status      text DEFAULT 'draft',
+  created_at  timestamptz DEFAULT now()
+);
+```
+
+This takes 5 minutes to set up vs. the full Prisma schema. The application code reads and writes plain JSON. Migrate to the normalised schema when you need querying across trips.
+
+### What the 48-hour MVP can and cannot claim
+
+| Can claim | Cannot claim |
+|-----------|-------------|
+| Source-backed reasoning (LLM-authored, honest) | Verified against real Reddit posts |
+| Realistic day pacing (LLM-constrained by prompt) | Guaranteed by deterministic rules |
+| Map-aware geographic grouping (LLM-prompted) | Validated against real coordinates |
+| Editable day plans | Full drag-and-drop (up/down buttons are enough) |
+| Save and export | Google OAuth (email only) |
+
+### When to add real sources (v1.1 priorities)
+
+After you have 20–30 users generating itineraries and validating that rationale drives trust:
+
+1. Add Foursquare: real place IDs, coordinates, hours, ratings
+2. Add Reddit sourcing: real post links per destination
+3. Add deterministic scheduler: replace LLM scheduling with rule-based engine + LLM rationale only
+4. Migrate storage to Prisma schema
+5. Add Mapbox GL JS interactive map
 
 ---
 
@@ -699,14 +895,28 @@ Current architecture handles this comfortably. No changes needed.
 
 ## Risk Mitigation
 
+### 48-hour build risks
+
 | Risk | Probability | Impact | Mitigation |
 |------|------------|--------|------------|
-| OpenAI cost overrun | Medium | Medium | Spending cap + rate limiting |
+| LLM produces incorrect lat/lng | High | Medium | Add bounding-box validation in post-processing; fall back to city centre coordinates |
+| LLM over-generates places (>5/day) | Medium | Low | Trim in post-processing; enforce max in system prompt |
+| LLM rationale is generic despite instructions | Medium | High | Iterate the system prompt; add few-shot examples of good vs. bad rationale |
+| Supabase setup takes longer than expected | Low | Medium | Use Supabase SQL editor directly; skip Prisma for 48-hour build |
+| Vercel deployment blocked by env vars | Low | Medium | Set all env vars in Vercel dashboard before first deploy |
+| OpenAI cost overrun during testing | Medium | Low | Set a $20 account spending cap before starting |
+| Next.js App Router + Supabase SSR confusion | Medium | High | Use `@supabase/ssr` package — it handles cookie-based auth correctly for App Router |
+
+### Production build risks (post-MVP)
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|------------|
 | Foursquare place data quality gaps | Medium | Medium | Cache good results; allow manual replace |
-| Reddit API changes or access revoked | Low | Low | Reddit is source enrichment only, not primary data — remove if needed |
-| Mapbox cost growth | Low | Medium | Cache all route results aggressively; consider OSM fallback |
-| Itinerary quality variance | High | High | Constrain to top 10 destinations at launch; manual QA each |
-| Supabase free tier limits | Low | Low | 500 MB and 50k MAU are generous for MVP; upgrade path is clear |
+| Reddit API changes or access revoked | Low | Low | Reddit is enrichment only — removable without breaking core flow |
+| Mapbox GL JS SSR issues | High | Medium | Use dynamic import with `ssr: false` wrapper |
+| Mapbox cost growth | Low | Medium | Cache all route results aggressively |
+| Itinerary quality inconsistency with real data | High | High | Constrain to top 10 destinations at launch; manual QA each |
+| Prisma + Supabase pooling config | High | Medium | Use direct connection for migrations, pooled (pgBouncer URL) for runtime |
 
 ---
 

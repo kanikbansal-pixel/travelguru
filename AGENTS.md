@@ -121,15 +121,22 @@ After each feature:
 
 ## Confirmed technical decisions (do not re-debate these)
 
-- **Stack:** Next.js 14 (App Router) + Supabase + OpenAI GPT-4o + Mapbox + Foursquare + Vercel
-- **Auth model:** Anonymous generation allowed; sign-in (Supabase Auth) required to save
-- **V1 city scope:** One city per trip (two-city deferred)
-- **Source set V1:** Foursquare (structured place data) + Reddit API (community signals, read-only)
-- **LLM role:** Rationale generation only — scheduling uses deterministic rules
-- **Source transparency UX:** Inline source badge on PlaceCard, expandable on click for full rationale
-- **Monetisation:** Not at launch; validate trust and usage first
+**48-hour MVP decisions:**
+- **Stack:** Next.js 14 (App Router) + Supabase (JS client, no Prisma) + OpenAI GPT-4o + Vercel
+- **LLM role for MVP:** Full itinerary generation in a single call — places, rationale, travel times, source labels, day grouping all in one GPT-4o response
+- **Data storage for MVP:** Single `trips` table with `jsonb` columns — no normalised schema yet
+- **Auth for MVP:** Supabase Auth, email only (no Google OAuth until post-MVP)
+- **Maps for MVP:** Mapbox Static Images API (optional) or deferred entirely — no interactive GL JS map
+- **External source APIs:** Foursquare and Reddit deferred to v1.1
 
-See `docs/TechDesign-WayPoint-MVP.md` for full reasoning and trade-off analysis.
+**Decisions that apply to all versions:**
+- **Auth model:** Anonymous generation allowed; sign-in required to save
+- **V1 city scope:** One city per trip (two-city deferred)
+- **Source transparency UX:** Inline source badge on PlaceCard, expandable on click for full rationale
+- **rationale is required on every place** — enforced in prompt, post-processing, and eventually DB schema
+- **Monetisation:** Not at launch; validate first
+
+See `docs/TechDesign-WayPoint-MVP.md` for full risk analysis and v1.1 production pipeline design.
 
 ---
 
