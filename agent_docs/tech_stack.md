@@ -1,109 +1,180 @@
 # Tech Stack — WayPoint MVP
 
-> Finalised after tech design phase. Use this as the reference for all implementation decisions.
+> Confirmed stack. Do not re-debate these decisions.
+> For full reasoning and trade-off analysis, see `docs/TechDesign-WayPoint-MVP.md`.
 
 ---
 
-## Stack — two phases
+## 48-hour MVP stack (use this now)
 
-### 48-hour MVP (use this to ship first)
-
-| Concern | Choice | Notes |
-|---------|--------|-------|
+| Layer | Choice | Notes |
+|-------|--------|-------|
 | Framework | **Next.js 14 (App Router)** | SSR + client components; API routes as serverless functions |
-| Language | **TypeScript (strict)** | Required across all files |
-| Styling | **Tailwind CSS + shadcn/ui** | shadcn/ui for accessible component primitives |
-| Database | **Supabase (PostgreSQL, Supabase JS client)** | Direct JS client — no Prisma in 48-hour build |
-| Storage schema | **Single `trips` table with jsonb columns** | Raw inputs + full itinerary JSON; migrate to normalised schema post-MVP |
-| Auth | **Supabase Auth (email only)** | Drop Google OAuth for now — adds config time |
-| LLM | **OpenAI GPT-4o (JSON mode)** | Generates entire itinerary in one call: places, rationale, travel time, source labels |
-| Place data | **LLM-generated** | No Foursquare in 48-hour build |
-| Community signals | **LLM-authored source labels** | No Reddit API in 48-hour build |
-| Maps | **Mapbox Static Images API (optional)** | REST call returns a PNG — 30 min to integrate; skip if time-constrained |
-| Deployment | **Vercel** | Automatic preview per branch; native Next.js support |
+| Language | **TypeScript strict** | `any` is forbidden |
+| Styling | **Tailwind CSS + shadcn/ui** | shadcn/ui for accessible, owned components |
+| Database | **Supabase PostgreSQL** | Via Supabase JS client (`@supabase/ssr`) — no Prisma yet |
+| Schema | **Single `trips` table + jsonb** | `inputs jsonb`, `itinerary jsonb` columns |
+| Auth | **Supabase Auth (email only)** | No Google OAuth in MVP |
+| LLM | **OpenAI GPT-4o (JSON mode)** | Full itinerary in one call |
+| Place data | **LLM-generated** | No Foursquare in MVP |
+| Source labels | **LLM-authored** | Honest community attribution phrasing |
+| Maps | **Mapbox Static Images API (optional)** | Simple REST → PNG; skip if time-constrained |
+| Deployment | **Vercel** | Auto-deploy from main; preview per branch |
+| Runtime validation | **Zod** | All API inputs + LLM output |
 
-### Production additions (v1.1, post-MVP validation)
+## Production additions (v1.1 — after MVP validation)
 
-| Concern | Choice | Notes |
-|---------|--------|-------|
-| ORM | **Prisma** | Migrate after schema stabilises |
-| Place data | **Foursquare Places API** | Real place IDs, coordinates, ratings |
-| Community signals | **Reddit API (read-only)** | Real post links per destination |
-| Maps (interactive) | **Mapbox GL JS + react-map-gl** | Add after validating map is worth the complexity |
-| Routing / travel time | **Mapbox Directions API** | Cache aggressively |
-| Auth additions | **Google OAuth** | Add after email auth is validated |
-| Error tracking | **Sentry (free tier)** | Add before public launch |
-| Analytics | **Posthog (free tier)** | Add before public launch |
-| Testing (unit) | **Vitest** | Add with Prisma migration |
-| Testing (E2E) | **Playwright** | Add after core flow stabilises |
-
----
-
-## Architecture pattern
-
-Single Next.js app: frontend + API routes (serverless). No separate backend service.
-
-```
-Browser → Next.js API Routes (Vercel) → Supabase / OpenAI / Mapbox / Foursquare / Reddit
-```
+| Layer | Choice |
+|-------|--------|
+| ORM | Prisma (after schema stabilises) |
+| Place data | Foursquare Places API |
+| Community signals | Reddit API (read-only) |
+| Maps (interactive) | Mapbox GL JS + react-map-gl |
+| Routing | Mapbox Directions API (cached) |
+| Auth additions | Google OAuth |
+| Error tracking | Sentry (free tier) |
+| Analytics | Posthog (free tier) |
+| Tests | Vitest + msw + Playwright |
 
 ---
 
-## Key design decisions
+## Install commands
 
-1. **Anonymous generation, sign-in to save.** Users generate without an account. Sign-in unlocks saving.
+```bash
+# Initialise project
+npx create-next-app@latest waypoint --typescript --tailwind --app --src-dir --import-alias "@/*"
 
-2. **48-hour MVP: LLM does everything in one call.** The LLM generates the full itinerary structure — places, rationale, travel time estimates, source labels, day grouping — in a single GPT-4o call with a detailed system prompt. A thin post-processing step enforces hard limits (max 5 places/day, bounding-box validation, non-empty rationale check).
+# Supabase
+npm install @supabase/supabase-js @supabase/ssr
 
-3. **V1.1+: Deterministic scheduling + real sources.** Foursquare for place data, Reddit API for community signals, Mapbox for routing, and a rule-based scheduler replace the LLM-as-scheduler approach. LLM is then used only for rationale text.
+# OpenAI
+npm install openai
 
-4. **jsonb storage first, Prisma schema after validation.** The 48-hour MVP stores the full itinerary as `jsonb`. Normalised Prisma schema comes after the data model is proven stable.
+# shadcn/ui (initialise, then add components as needed)
+npx shadcn@latest init
+npx shadcn@latest add button card badge input select label textarea
 
-5. **rationale is required.** Enforced in the system prompt, in post-processing, and eventually in the DB schema. Never return a place without it.
+# Runtime validation
+npm install zod
 
-6. **V1 scope: one city per trip.** Two-city support deferred.
-
-7. **Top 10 destinations at launch.** Quality over coverage. Manually QA each destination before exposing it.
+# Icons
+npm install lucide-react
+```
 
 ---
 
-## Cost reference (MVP scale)
+## Environment variables
 
-| Scale | Monthly estimate |
-|-------|----------------|
-| 0–500 users | $0–$15 |
-| 500–2000 users | $30–$80 |
-| 2000–10000 users | $100–$300 |
+### 48-hour MVP minimum
 
-Set an OpenAI spending cap at $20/month during development. Rate limit itinerary generation to 3 per IP per hour.
-
----
-
-## Environment variables needed
-
-### 48-hour MVP (minimum)
-```
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY
-OPENAI_API_KEY
+```bash
+# .env.local
+NEXT_PUBLIC_SUPABASE_URL=          # From Supabase project settings
+NEXT_PUBLIC_SUPABASE_ANON_KEY=     # From Supabase project settings → API
+SUPABASE_SERVICE_ROLE_KEY=         # Server-only. Never expose to browser.
+OPENAI_API_KEY=                    # From platform.openai.com — set $20 spending cap
 ```
 
-### Production additions
-```
-NEXT_PUBLIC_MAPBOX_TOKEN
-MAPBOX_TOKEN
-FOURSQUARE_API_KEY
-REDDIT_CLIENT_ID
-REDDIT_CLIENT_SECRET
+### Production additions (add later)
+
+```bash
+NEXT_PUBLIC_MAPBOX_TOKEN=
+MAPBOX_TOKEN=
+FOURSQUARE_API_KEY=
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
 REDDIT_USER_AGENT=waypoint/1.0
-SENTRY_DSN
-NEXT_PUBLIC_POSTHOG_KEY
-NEXT_PUBLIC_POSTHOG_HOST
+SENTRY_DSN=
+NEXT_PUBLIC_POSTHOG_KEY=
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
 ```
 
 ---
 
-## Full technical design
+## Key package.json scripts to add
 
-See `docs/TechDesign-WayPoint-MVP.md` for architecture diagram, full data schema, API design, pipeline breakdown, and build phase order.
+```json
+{
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  }
+}
+```
+
+---
+
+## Supabase client pattern
+
+**Two clients — never mix them:**
+
+```typescript
+// src/lib/supabase/server.ts — for API routes and server components
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+
+export function createClient() {
+  const cookieStore = cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get: (name) => cookieStore.get(name)?.value } }
+  )
+}
+```
+
+```typescript
+// src/lib/supabase/client.ts — for browser/client components only
+import { createBrowserClient } from '@supabase/ssr'
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+}
+```
+
+---
+
+## OpenAI pattern
+
+```typescript
+import OpenAI from 'openai'
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+const response = await client.chat.completions.create({
+  model: 'gpt-4o',
+  response_format: { type: 'json_object' },  // JSON mode
+  messages: [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt },
+  ],
+  temperature: 0.7,
+})
+```
+
+Always validate the parsed output with Zod — LLM can still return wrong shapes even in JSON mode.
+
+---
+
+## Key design decisions (do not re-debate)
+
+1. Anonymous generation allowed; sign-in required to save
+2. Single LLM call generates full itinerary — no separate scheduling engine in MVP
+3. Zod validates all inputs AND all LLM outputs
+4. `rationale` and `sourceLabel` are required on every place — enforced in Zod schema
+5. Max 5 places per day — enforced in Zod schema and LLM system prompt
+6. jsonb storage — no normalised schema until post-MVP validation
+7. One city per trip in v1
+
+---
+
+## Cost guardrails
+
+- Set an OpenAI account spending cap at **$20/month** before starting
+- Rate limit `/api/itinerary/generate` to max 3 requests per IP per hour (add Vercel Edge middleware)
+- LLM cost per itinerary: ~$0.03–0.06 for a 5-day trip with GPT-4o

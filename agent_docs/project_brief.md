@@ -1,63 +1,167 @@
 # Project Brief — WayPoint
 
-> Load this at the start of every new session for compact context.
+> Load this at the start of every session alongside AGENTS.md and MEMORY.md.
+> Keep this file updated as the project scales.
 
 ---
 
-## What is WayPoint?
+## Product vision
 
-A web app that generates realistic, source-backed international trip itineraries for research-heavy leisure travelers. Users enter their destination, dates, budget, pace, and interests — and get an editable day-by-day plan with map-aware routing and visible rationale for every recommended place.
+WayPoint generates realistic, source-backed international trip itineraries for research-heavy leisure travelers. Every recommendation shows *why* it was chosen. Every day plan is realistic — never overpacked.
 
-**Differentiators:**
-- Every recommendation shows *why* it was chosen and which source it came from
-- Day plans include realistic travel-time buffers (not just a list of places)
-- Users edit like a document, not a chatbot
+**Core differentiators:**
+1. Specific, personalized rationale on every place (not "a must-visit")
+2. Realistic travel-time buffers between stops
+3. Edit like a document, not a chatbot
 
 ---
 
 ## Current phase
 
-Research, PRD, and technical design are done. Next step is generating `AGENTS.md` agent-specific configs and starting the MVP build (Phase 1: skeleton).
+**Phase 1 — Skeleton** (check `MEMORY.md` for task-level state)
 
 ---
 
-## MVP constraints
+## Key commands
 
-- International city trips only: 3–7 days, 1–2 cities
-- Web only (no mobile app in v1)
-- Low budget — avoid APIs that get expensive fast at low scale
-- Solo or small team — keep architecture simple
+```bash
+# Development
+npm run dev              # Start dev server → http://localhost:3000
+npm run build            # Production build (run before deploying)
+
+# Quality
+npm run typecheck        # TypeScript strict check (no emit)
+npm run lint             # ESLint
+npm run lint:fix         # ESLint with auto-fix
+
+# Database
+# Run SQL directly in Supabase dashboard SQL editor
+# No Prisma in 48-hour MVP
+```
+
+## Environment setup
+
+```bash
+# 1. Clone
+git clone https://github.com/kanikbansal-pixel/travelguru
+cd travelguru
+
+# 2. Install dependencies
+npm install
+
+# 3. Set up environment
+cp .env.example .env.local
+# Fill in: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
+#          SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY
+
+# 4. Create trips table in Supabase SQL editor
+# Copy SQL from agent_docs/resources.md
+
+# 5. Start dev server
+npm run dev
+```
 
 ---
 
-## Core features (MVP only)
+## Architecture at a glance
 
-1. Trip input form
-2. Recommendation engine with source-backed candidate places
-3. Day-by-day itinerary builder (map-aware, time-buffer-aware)
-4. Inline editor (reorder, remove, replace, regenerate single day)
-5. Map view with travel time estimates between stops
-6. Trust layer: rationale + source link per place
-7. Save and export
+```
+Browser
+  └── Next.js 14 App Router (src/app/)
+        ├── Pages (server components by default)
+        ├── Client components (marked 'use client')
+        └── API routes (src/app/api/**/route.ts)
+              └── Calls: Supabase JS | OpenAI API
+```
 
----
-
-## Non-goals for MVP
-
-Flight booking, hotel booking, payments, visa support, social features, mobile app, full global destination coverage.
+No separate backend. Everything is serverless Next.js on Vercel.
 
 ---
 
-## Confirmed stack
+## Directory structure (48-hour MVP)
 
-Next.js 14 (App Router) + Supabase + OpenAI GPT-4o + Mapbox + Foursquare Places API + Reddit API + Vercel
+```
+src/
+├── app/
+│   ├── page.tsx                  # Landing page
+│   ├── plan/
+│   │   ├── page.tsx              # Trip input form
+│   │   └── [tripId]/page.tsx    # Itinerary view + editor
+│   └── api/
+│       ├── itinerary/
+│       │   ├── generate/route.ts
+│       │   └── [tripId]/day/regenerate/route.ts
+│       └── trips/route.ts
+├── components/
+│   ├── ui/                       # shadcn/ui primitives
+│   ├── trip-form/
+│   │   └── TripForm.tsx
+│   └── itinerary/
+│       ├── ItineraryView.tsx
+│       ├── DayCard.tsx
+│       ├── PlaceCard.tsx
+│       └── TravelTimeBadge.tsx
+├── lib/
+│   ├── supabase/
+│   │   ├── client.ts             # Browser client
+│   │   └── server.ts             # Server client
+│   └── openai/
+│       └── generateItinerary.ts
+└── types/
+    └── index.ts
+```
 
-## Key files
+---
 
-| File | Purpose |
-|------|---------|
-| `AGENTS.md` | Master AI instructions — read first |
-| `docs/PRD-WayPoint-MVP.md` | Full product requirements |
-| `docs/research-WayPoint.md` | Market research and competitor analysis |
-| `docs/TechDesign-WayPoint-MVP.md` | Full technical design — stack, schema, pipeline, build phases |
-| `agent_docs/tech_stack.md` | Quick reference for confirmed stack decisions |
+## Coding conventions
+
+| Rule | Detail |
+|------|--------|
+| Language | TypeScript strict — no `any` |
+| Components | One per file, PascalCase filename |
+| Server vs client | Server by default; `'use client'` only when needed |
+| Imports | Path aliases: `@/components`, `@/lib`, `@/types` |
+| API validation | Zod on all request bodies before use |
+| LLM output | Zod validation after parsing — never trust raw LLM JSON |
+| Error shape | `{ error: string }` from all API routes |
+| Comments | Only for non-obvious intent — no code narration |
+| DB columns | snake_case |
+| TS types/interfaces | PascalCase |
+| Env vars | SCREAMING_SNAKE_CASE, in `.env.local` only |
+
+---
+
+## Quality gates (run before every commit)
+
+```bash
+npm run typecheck   # must pass — zero errors
+npm run lint        # must pass — zero errors/warnings
+```
+
+If either fails: fix before committing. Do not suppress errors.
+
+---
+
+## Pre-commit hook setup (add after Phase 1)
+
+```bash
+npm install --save-dev husky lint-staged
+npx husky init
+# In .husky/pre-commit:
+# npx lint-staged
+
+# In package.json:
+# "lint-staged": {
+#   "*.{ts,tsx}": ["eslint --fix", "prettier --write"]
+# }
+```
+
+---
+
+## Update cadence
+
+Update this file when:
+- New dependencies are added (add the install command)
+- The directory structure changes significantly
+- New conventions are adopted
+- Phase changes (update "Current phase")

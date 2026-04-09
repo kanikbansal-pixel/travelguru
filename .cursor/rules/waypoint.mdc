@@ -1,29 +1,60 @@
 ---
-description: WayPoint project rules — applied to all sessions in this repo
+description: WayPoint project rules — applied to all Cursor sessions in this repo
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# WayPoint agent rules
+# WayPoint — Cursor Agent Rules
 
-Always read `AGENTS.md` first. Then load `agent_docs/project_brief.md` for compact context.
+## Session start (required every time)
 
-## Non-negotiables
+1. Read `AGENTS.md` — master contract, confirmed decisions, what NOT to do
+2. Read `MEMORY.md` — active phase and last known state
+3. Read `agent_docs/project_brief.md` — dev commands and quality gates
+4. Propose your plan. Wait for approval before writing code.
 
-- Every itinerary place must have a `rationale` field and at least one `source` reference. Never stub or skip these — they are the core product differentiator.
-- Day plans must include travel-time buffers between stops. Never return a day plan that is just a flat list of places with no timing logic.
-- No API keys, secrets, or credentials in source code. Use environment variables only.
-- No full blog or article text stored in the database. Summaries, metadata, and source links only.
-- Do not build features outside MVP scope without explicit approval.
+## Core directives
 
-## Workflow
+1. **Plan before coding.** Bullet-point your approach. Wait for approval.
+2. **One feature at a time.** Verify before moving on.
+3. **Run `npm run typecheck && npm run lint` after every non-trivial change.** Fix failures before continuing.
+4. **Every place must have `rationale` and `sourceLabel`.** Never stub or skip these — they are the core product differentiator.
+5. **No `any` types.** Use `unknown` with type guards or define proper interfaces.
+6. **No secrets in code.** All API keys go in `.env.local` only.
+7. **Update `MEMORY.md` at the end of every session.**
 
-- Propose a plan before writing code. Wait for approval.
-- Build one feature at a time. Stop and summarize after each.
-- Write a `specs/recap-YYYY-MM-DD.md` at the end of each session.
+## Architecture rules
 
-## Code style
+- API route handlers (`app/api/**/route.ts`) handle request/response only — no business logic
+- All business logic lives in `src/lib/` services
+- No direct Supabase calls from React components
+- Server components are default — add `'use client'` only when required (event handlers, state, hooks)
+- Use path aliases (`@/components`, `@/lib`, `@/types`) — never relative `../../` imports
+- Validate all API inputs with Zod before using any field
 
-- TypeScript with strict mode. No `any` without justification.
-- Small, single-purpose components and functions.
-- Comments only for non-obvious intent — not narration of what the code does.
+## What NOT to do
+
+- Do NOT add features outside the current build phase (check `AGENTS.md` and `MEMORY.md`)
+- Do NOT use `any` types
+- Do NOT skip typecheck/lint
+- Do NOT commit secrets or API keys
+- Do NOT modify the DB schema without noting it in `MEMORY.md`
+- Do NOT add libraries without checking `package.json` first
+
+## Code patterns
+
+See `agent_docs/code_patterns.md` for:
+- TypeScript type definitions (Place, Day, Itinerary, TripInputs)
+- Supabase client setup (server vs browser)
+- API route pattern with Zod validation
+- OpenAI call pattern with LLM output validation
+- React component patterns (server vs client)
+- Error handling pattern
+
+## Stack reference
+
+See `agent_docs/tech_stack.md` for confirmed stack decisions and environment variable names.
+
+## First prompt
+
+> "Read AGENTS.md and MEMORY.md. Tell me the current build phase, what was last completed, and what you plan to do next. Wait for my approval before writing any code."
